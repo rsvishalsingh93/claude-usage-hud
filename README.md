@@ -2,11 +2,11 @@
 
 A small usage bar that sits above the Claude Code prompt and opens into a row of cards. You can see how much of your plan limits you have used, when they reset in your own time zone, whether you're using them faster than the clock refills them, what is filling your context window, whether the prompt cache is still warm, and roughly what the session would cost at API prices.
 
-```
-🌗 5h ━━━━━━━─────── 57% · 55m · 2:20 PM  │  🌳 week ━━━━━─────── 41% · runs out ~Thu 4:10 PM · Sun 6:30 PM  │  🎈 ctx 193k/1.0M  │  🔥 cache 42m  │  🪙 $3.83 est.  details ›
-```
+![The usage bar above the Claude Code prompt](docs/bar.png)
 
 Click `details ›` (or type `/hud`) and the bar opens into four cards above the prompt: **Limits**, **Context**, **Cache** and **Session**. They are drawn on your terminal's own background, so they fit light and dark terminals alike.
+
+![The usage cards: limits, context, cache and session](docs/cards.png)
 
 ## Install
 
@@ -54,7 +54,7 @@ claude plugin marketplace remove claude-usage-hud
 
 **The cards.**
 
-- **Limits**: each limit's bar, how much of its window has gone, where your pace takes you ("projected ~72% by reset", or "projected to run out ~4:05 PM"), and the exact reset date and time in your computer's time zone.
+- **Limits**: each limit's bar, how much of its window has gone, where your pace takes you ("~72% by reset", or "runs out ~Tue 5:18 PM"), and the exact reset date and time in your computer's time zone.
 - **Context**: tokens in the window, a bar split by category (messages, tools, skills, system prompt, ...) with the autocompact reserve at the right end, and the largest categories listed.
 - **Cache**: how long the prompt cache stays warm (1 hour on a subscription, 5 minutes on an API key), the last request split into cached, written and new tokens, and its hit rate.
 - **Session**: estimated cost, model, turns, estimated burn per hour and the hit rate of recent turns.

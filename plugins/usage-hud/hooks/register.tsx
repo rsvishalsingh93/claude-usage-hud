@@ -392,9 +392,9 @@ export const register: Register = on => {
           {Math.round(t * 100)}% of window gone
           {f ? (
             f.outAt ? (
-              <Text color={p.l.pct >= 85 ? C.bad : C.warn} bold> · projected to run out ~{when(f.outAt)}</Text>
+              <Text color={p.l.pct >= 85 ? C.bad : C.warn} bold> · runs out ~{when(f.outAt)}</Text>
             ) : (
-              ` · projected ~${Math.min(100, Math.round(f.projected))}% by reset`
+              ` · ~${Math.min(100, Math.round(f.projected))}% by reset`
             )
           ) : (
             ''
