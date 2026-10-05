@@ -1,0 +1,4 @@
+.DS_Store
+node_modules/
+# written by Claude Code when it loads the plugin
+plugins/*/.claude-plugin/types/
