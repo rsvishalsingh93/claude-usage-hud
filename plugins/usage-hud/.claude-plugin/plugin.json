@@ -1,6 +1,6 @@
 {
   "name": "usage-hud",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Usage bar above the Claude Code prompt that expands into cards: plan limits with local reset times and pace, context breakdown, prompt cache, estimated cost",
   "author": { "name": "rsvishalsingh93", "url": "https://github.com/rsvishalsingh93" },
   "homepage": "https://github.com/rsvishalsingh93/claude-usage-hud",

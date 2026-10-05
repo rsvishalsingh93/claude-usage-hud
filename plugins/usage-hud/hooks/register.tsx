@@ -286,20 +286,18 @@ export const register: Register = on => {
     const flowing = animating(s)
     const roleColor = (role: Cell['role'], pct: number) =>
       role === 'ahead' ? (pct >= 85 ? C.bad : C.warn) : role === 'fill' ? usedTone(pct) : role === 'track' ? C.track : undefined
-    const PaceBar = (p: { l: { kind: string; pct: number; resetsAt?: string }; width: number; g: { fill: string; gap: string; track: string; needle: string } }) => (
+    const PaceBar = (p: { l: { kind: string; pct: number; resetsAt?: string }; width: number; g: { fill: string; gap: string; track: string; needle: string }; flow: boolean }) => (
       <Text>
-        {runs(paceCells(p.l.pct / 100, timeFrac(p.l.kind, resetAt(p.l), s.now), p.width, p.g, s.phase, flowing)).map((r, i) => (
+        {runs(paceCells(p.l.pct / 100, null, p.width, p.g, s.phase, p.flow && flowing)).map((r, i) => (
           <Text key={`r${i}`} color={roleColor(r.role, p.l.pct)} bold={r.role === 'needle'}>
             {r.text}
           </Text>
         ))}
       </Text>
     )
-    // Usage minus the share of the window gone: above zero, spending faster than the clock refills.
-    const lead = (l: { kind: string; pct: number; resetsAt?: string }) => {
-      const t = timeFrac(l.kind, resetAt(l), s.now)
-      return t === null ? null : Math.round(l.pct - t * 100)
-    }
+    const fc = (l: { kind: string; pct: number; resetsAt?: string }) => forecast(l.pct, resetAt(l), WINDOW_MS[l.kind] ?? 0, s.now, s.samples[l.kind] ?? [])
+    // A time today reads as the time alone; any other day gets its weekday.
+    const when = (t: number) => (localTime(t).date === localTime(s.now).date ? localTime(t).time : `${localTime(t).day} ${localTime(t).time}`)
     // Cache
     const age = s.lastAt ? s.now - s.lastAt : s.ttl
     const remain = Math.max(0, s.ttl - age)
@@ -310,17 +308,17 @@ export const register: Register = on => {
     if (!s.open) {
       const narrow = cols < 70
       const W = narrow ? 6 : 12
-      const BAND = { fill: '━', gap: '─', track: '━', needle: '┃' }
+      const BAND = { fill: '━', gap: '━', track: '─', needle: '' }
       const Sep = () => <Text color={C.track}>  │  </Text>
       const Mini = (p: { label: string; l: { kind: string; pct: number; resetsAt?: string }; note?: string }) => {
-        const d = lead(p.l)
+        const out = fc(p.l)?.outAt
         return (
           <Text>
             <Text>{(LIMIT_ICON[p.l.kind] ?? moon)(p.l.pct)} </Text>
             <Text color={C.muted}>{p.label} </Text>
-            <PaceBar l={p.l} width={W} g={BAND} />
+            <PaceBar l={p.l} width={W} g={BAND} flow={false} />
             <Text color={usedTone(p.l.pct)} bold> {Math.round(p.l.pct)}%</Text>
-            {!narrow && d !== null && d > 3 ? <Text color={p.l.pct >= 85 ? C.bad : C.warn}> +{d} ahead</Text> : null}
+            {!narrow && out ? <Text color={p.l.pct >= 85 ? C.bad : C.warn}> · runs out ~{when(out)}</Text> : null}
             {p.note && !narrow ? <Text color={C.muted}> · {p.note}</Text> : null}
           </Text>
         )
@@ -383,17 +381,24 @@ export const register: Register = on => {
         {p.children}
       </Box>
     )
-    const CARD = { fill: '▄', gap: '▂', track: '▄', needle: '┃' }
+    const CARD = { fill: '▄', gap: '▂', track: '▄', needle: '' }
     // One line under a limit's bar: how far ahead of or behind the clock it is, and where the pace lands it.
     const Pace = (p: { l: { kind: string; pct: number; resetsAt?: string } }) => {
-      const d = lead(p.l)
-      const f = forecast(p.l.pct, resetAt(p.l), WINDOW_MS[p.l.kind] ?? 0, s.now, s.samples[p.l.kind] ?? [])
-      if (d === null) return null
-      const ahead = d > 3
+      const t = timeFrac(p.l.kind, resetAt(p.l), s.now)
+      const f = fc(p.l)
+      if (t === null) return null
       return (
         <Text color={C.muted} wrap="truncate">
-          <Text color={ahead ? (p.l.pct >= 85 ? C.bad : C.warn) : C.ok} bold>{ahead ? `${d}% ahead of the clock` : d < -3 ? `${-d}% behind the clock` : 'on the clock'}</Text>
-          {f ? (f.outAt ? ` · projected out ~${localTime(f.outAt).time}` : ` · projected ~${Math.min(100, Math.round(f.projected))}% by reset`) : ''}
+          {Math.round(t * 100)}% of window gone
+          {f ? (
+            f.outAt ? (
+              <Text color={p.l.pct >= 85 ? C.bad : C.warn} bold> · projected to run out ~{when(f.outAt)}</Text>
+            ) : (
+              ` · projected ~${Math.min(100, Math.round(f.projected))}% by reset`
+            )
+          ) : (
+            ''
+          )}
         </Text>
       )
     }
@@ -408,7 +413,7 @@ export const register: Register = on => {
           }
           right={p.l ? <Text bold color={usedTone(p.l.pct)}>{Math.round(p.l.pct)}%</Text> : <Text color={C.muted}>—</Text>}
         />
-        {p.l ? <PaceBar l={p.l} width={W} g={CARD} /> : <Bar frac={0} color={C.track} />}
+        {p.l ? <PaceBar l={p.l} width={W} g={CARD} flow /> : <Bar frac={0} color={C.track} />}
         {p.l && <Pace l={p.l} />}
         {p.l?.resetsAt ? (
           <Text color={C.muted} wrap="truncate">
