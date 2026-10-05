@@ -32,16 +32,16 @@ const span = (ms: number) => {
   if (ms <= 0) return 'now'
   const m = Math.floor(ms / 60000)
   const d = Math.floor(m / 1440)
-  const h = Math.floor((m % 1440) / 60)
-  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`
+  const hrs = Math.floor((m % 1440) / 60)
+  return d > 0 ? `${d}d ${hrs}h` : hrs > 0 ? `${hrs}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`
 }
 // Reset times in the computer's own time zone: the module's Date follows the host's, daylight saving included.
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 export function localTime(at: number) {
   const d = new Date(at)
-  const h = d.getHours()
-  const time = `${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
+  const hour = d.getHours()
+  const time = `${hour % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')} ${hour < 12 ? 'AM' : 'PM'}`
   const day = DAYS[d.getDay()]!
   return { time, day, date: `${day} ${d.getDate()} ${MONTHS[d.getMonth()]}` }
 }
