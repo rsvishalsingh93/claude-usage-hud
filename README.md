@@ -76,6 +76,20 @@ claude plugin marketplace remove claude-usage-hud
 - The cards need about 12 rows. On a short terminal, the space above the prompt scrolls.
 - The bar redraws once a second to keep the countdowns live, and about three times a second while Claude is working. `/hud calm` keeps it to once a second.
 
+## What the plugin hooks, and what it doesn't touch
+
+The plugin only reads. It never blocks, rewrites or answers anything that isn't its own: every hook below passes the event on unchanged with `next(e)`, except `/hud`, which it owns.
+
+| Hook | What it does |
+| --- | --- |
+| `session.start` | registers the `/hud` command, reads the session's usage once and starts the clock that keeps the countdowns live |
+| `command.run` (only `/hud`) | opens or closes the cards; `/hud calm` turns the animations off and on. Other commands are not seen |
+| `session.measure` | re-reads usage when Claude Code measures the session |
+| `turn.start`, `turn.complete` | notes when Claude is working (for the animation), and after each turn records the last request's token counts (cached, written, new) for the Cache card |
+| `ui.render` (the band above the prompt) | draws the bar and the cards; it steps aside for Claude Code's own surveys there |
+
+It calls `$.session.usage` (the figures `/cost`, `/context` and the rate-limit headers already give Claude Code), `$.clock`, `$.ui` and `$.state` (its own snapshot, kept for the session). No network calls, no files, no processes, and nothing leaves your computer.
+
 ## Develop
 
 The plugin is one hooks module, `plugins/usage-hud/hooks/register.tsx`. To try a change without installing:

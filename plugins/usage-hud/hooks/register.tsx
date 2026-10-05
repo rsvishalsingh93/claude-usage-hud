@@ -1,5 +1,4 @@
-import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 import type { Part, Sample, Snap, Turn } from '../types'
 
@@ -11,7 +10,6 @@ const REFRESH_MS = 10_000
 const WINDOW_MS: Record<string, number> = { five_hour: 5 * 3600_000, seven_day: 7 * 86400_000 }
 const CARD_MIN = 34
 const empty: Snap = { limits: [], ctx: null, usd: 0, model: '', ttl: TTL_SUB_MS, lastAt: 0, turns: [], now: 0, open: false, parts: [], buffer: 0, samples: {}, phase: 0, startedAt: 0, calm: false, working: false }
-const snap = atom({ plugin: 'usage-hud', key: 'snap' } as const, empty)
 
 let isOpen = false
 let isLooping = false
@@ -164,7 +162,21 @@ export const pie = (frac: number) => PIE[frac <= 0 ? 0 : Math.max(1, Math.min(4,
 const SPARK = '▁▂▃▄▅▆▇█'
 const spark = (pct: number) => SPARK[Math.min(7, Math.floor((pct / 100) * 8))]
 
-async function refresh($: any) {
+// The session's snapshot. Reading it while drawing makes the drawing follow its writes.
+async function load($: EngineInterface): Promise<Snap> {
+  const { value } = await $.state.get({ plugin: 'usage-hud', key: 'snap' })
+  return { ...empty, ...value }
+}
+// Writes are version-checked and retried, so the clock and a turn's hooks never overwrite each other.
+async function save($: EngineInterface, change: (s: Snap) => Snap) {
+  for (;;) {
+    const { value, version } = await $.state.get({ plugin: 'usage-hud', key: 'snap' })
+    const { isSet } = await $.state.set({ plugin: 'usage-hud', key: 'snap' }, change({ ...empty, ...value }), { ifVersion: version })
+    if (isSet) return
+  }
+}
+
+async function refresh($: EngineInterface) {
   // The per-category breakdown (local estimates, as /context's summary) is only read while the cards show it.
   const u = await $.session.usage(isOpen ? { breakdown: 'summary' } : undefined)
   const now = await $.clock.now()
@@ -179,7 +191,7 @@ async function refresh($: any) {
     .sort((x: any, y: any) => y.tokens - x.tokens)
     .map((c: any) => ({ name: c.name, tokens: c.tokens, color: c.color }))
   const buffer = b ? (b.categories.find((c: any) => c.kind === 'buffer')?.tokens ?? 0) : undefined
-  await update($, snap, (s: Snap) => {
+  await save($, (s: Snap) => {
     // Keep the last half hour of readings per limit; a drop means the window reset, so its history starts over.
     const samples: Record<string, Sample[]> = {}
     for (const l of limits as { kind: string; pct: number }[]) {
@@ -196,27 +208,27 @@ async function refresh($: any) {
 const animating = (s: Snap) => !s.calm && s.working
 
 // The clock: a frame every 300ms while tokens flow, else once a second for the countdowns; usage every 10s.
-async function pulse($: any) {
+async function pulse($: EngineInterface) {
   isLooping = true
   let lastRead = 0
   for (;;) {
-    const s = await read($, snap)
+    const s = await load($)
     await $.clock.sleep(animating(s) ? ANIM_MS : TICK_MS)
     const now = await $.clock.now()
     if (now - lastRead >= REFRESH_MS) {
       lastRead = now
       await refresh($)
     }
-    await update($, snap, (v: Snap) => ({ ...v, now, phase: v.phase + 1 }))
+    await save($, (v: Snap) => ({ ...v, now, phase: v.phase + 1 }))
   }
 }
 
 // The details live in the band itself, drawn on the terminal's own background: no docked pane, no slab of
 // theme colour beside the transcript, and the transcript keeps its full width.
-async function setOpen($: any, open: boolean) {
+async function setOpen($: EngineInterface, open: boolean) {
   isOpen = open
   if (open) await refresh($)
-  await update($, snap, (s: Snap) => ({ ...s, open }))
+  await save($, (s: Snap) => ({ ...s, open }))
 }
 
 // How many cards sit side by side in the band's width.
@@ -226,7 +238,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'hud', description: 'Show or hide the usage cards; /hud calm turns the animations off and on' })
     $.ui.status(undefined)
-    await update($, snap, (s: Snap) => ({ ...s, open: false }))
+    await save($, (s: Snap) => ({ ...s, open: false }))
     await refresh($)
     if (!isLooping) void pulse($)
     return next(e)
@@ -234,11 +246,11 @@ export const register: Register = on => {
 
   on('command.run', { command: 'hud' }, async ($, e) => {
     if (e.args.trim() === 'calm') {
-      const calm = !(await read($, snap)).calm
-      await update($, snap, (s: Snap) => ({ ...s, calm }))
+      const calm = !(await load($)).calm
+      await save($, (s: Snap) => ({ ...s, calm }))
       return { text: calm ? 'Usage HUD animations off.' : 'Usage HUD animations on.' }
     }
-    const open = !(await read($, snap)).open
+    const open = !(await load($)).open
     await setOpen($, open)
     return { text: open ? 'Usage cards shown above the prompt.' : 'Usage cards hidden.' }
   })
@@ -249,12 +261,12 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
-    await update($, snap, (s: Snap) => ({ ...s, working: true }))
+    await save($, (s: Snap) => ({ ...s, working: true }))
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
-    await update($, snap, (s: Snap) => ({ ...s, working: false }))
+    await save($, (s: Snap) => ({ ...s, working: false }))
     // turn.complete's usage sums every request of the turn, so a tool-heavy turn counts the whole prompt once per step.
     // The window's last response is what the context bar measures: use that so both agree.
     const win = (await $.session.usage({ breakdown: 'summary' })).context.breakdown?.apiUsage
@@ -268,14 +280,14 @@ export const register: Register = on => {
         fresh: u.input_tokens,
         hit: Math.round((u.cache_read_input_tokens / Math.max(1, seen)) * 100),
       }
-      await update($, snap, (s: Snap) => ({ ...s, model: e.usage?.model ?? s.model, lastAt: at, turns: [...s.turns, turn].slice(-12) }))
+      await save($, (s: Snap) => ({ ...s, model: e.usage?.model ?? s.model, lastAt: at, turns: [...s.turns, turn].slice(-12) }))
     }
     await refresh($)
     return next(e)
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const s = await read($, snap)
+    const s = await load($)
     const five = s.limits.find(l => l.kind === 'five_hour')
     const week = s.limits.find(l => l.kind === 'seven_day')
     if (e.props.hasSurvey || (!five && !week && !s.ctx)) return next(e)
