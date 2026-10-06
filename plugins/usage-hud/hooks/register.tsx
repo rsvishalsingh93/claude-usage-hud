@@ -1,6 +1,6 @@
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Part, Sample, Snap, Turn } from '../types'
+import type { Limit, Part, Sample, Snap, Turn } from '../types'
 
 const TTL_API_MS = 5 * 60 * 1000
 const TTL_SUB_MS = 60 * 60 * 1000
@@ -26,7 +26,25 @@ const C = {
   accent: 'claude',
 } as const
 
-const tok = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}k` : `${n}`)
+// A reading the host left out, or one a gateway or cloud provider sent as null or text, counts as nothing.
+export const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+// Short counts: 950, 9.5k, 95k, 1.2M. The cut-offs sit where rounding would carry into the next unit.
+export const tok = (n: number) => {
+  const v = Math.max(0, num(n))
+  return v < 999.5 ? `${Math.round(v)}` : v < 9950 ? `${(v / 1e3).toFixed(1)}k` : v < 999_500 ? `${Math.round(v / 1e3)}k` : v < 9.95e6 ? `${(v / 1e6).toFixed(1)}M` : `${Math.round(v / 1e6)}M`
+}
+// Dollars: cents while small, whole dollars past $100, then k, so a long API session never runs to five digits.
+export const money = (usd: number) => {
+  const v = Math.max(0, num(usd))
+  return v < 99.995 ? `$${v.toFixed(2)}` : v < 999.5 ? `$${Math.round(v)}` : v < 9950 ? `$${(v / 1e3).toFixed(1)}k` : v < 999_500 ? `$${Math.round(v / 1e3)}k` : `$${(v / 1e6).toFixed(1)}M`
+}
+// Cells a string takes in the terminal: an emoji two, a variation selector or joiner none, the rest one.
+export const cells = (str: string) =>
+  [...str].reduce((n, ch) => {
+    const cp = ch.codePointAt(0)!
+    return n + (cp === 0xfe0f || cp === 0x200d ? 0 : cp >= 0x1f000 || cp === 0x23f3 ? 2 : 1)
+  }, 0)
+const clip = (str: string, w: number) => ([...str].length <= w ? str : `${[...str].slice(0, Math.max(0, w - 1)).join('')}…`)
 const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}`
 const span = (ms: number) => {
   if (ms <= 0) return 'now'
@@ -150,10 +168,14 @@ const timeFrac = (kind: string, resetAt: number, now: number) => {
 // bubble filling toward the pop of autocompact; the cache a fire that dies to ice; the cost a coin, flying while spent.
 export const moon = (used: number) => ['🌕', '🌖', '🌗', '🌘', '🌑'][Math.max(0, Math.min(4, Math.round(used / 25)))]!
 export const season = (used: number) => (used < 25 ? '🌱' : used < 50 ? '🌿' : used < 75 ? '🌳' : used < 95 ? '🍂' : '🥀')
-export const bubble = (ctxPct: number) => (ctxPct < 40 ? '🫧' : ctxPct < 80 ? '🎈' : '💥')
+// Only emoji every terminal's width table knows: a newer one (🫧, 🪙) drawn one cell wide where the layout counts
+// two shifts the rest of the row, and the next redraw leaves stray letters behind ("cachre").
+export const bubble = (ctxPct: number) => (ctxPct < 40 ? '💧' : ctxPct < 80 ? '🎈' : '💥')
 export const ember = (warm: boolean, remain: number) => (!warm ? '🧊' : remain < 5 * 60_000 ? '⏳' : '🔥')
-export const coin = (spending: boolean) => (spending ? '💸' : '🪙')
-const LIMIT_ICON: Record<string, (used: number) => string> = { five_hour: moon, seven_day: season }
+export const coin = (spending: boolean) => (spending ? '💸' : '💰')
+const card = () => '💳'
+const LIMIT_ICON: Record<string, (used: number) => string> = { five_hour: moon, seven_day: season, spend_limit: card }
+const LIMIT_LABEL: Record<string, string> = { five_hour: '5h', seven_day: 'week', spend_limit: 'spend' }
 
 // The prompt cache as a pie that empties as its time runs out.
 const PIE = ['○', '◔', '◑', '◕', '●']
@@ -180,17 +202,21 @@ async function refresh($: EngineInterface) {
   // The per-category breakdown (local estimates, as /context's summary) is only read while the cards show it.
   const u = await $.session.usage(isOpen ? { breakdown: 'summary' } : undefined)
   const now = await $.clock.now()
-  const limits = u.rateLimits.map((r: any) => ({ kind: r.kind, pct: r.percentUsed, resetsAt: r.resetsAt }))
-  const ctx = u.context.tokens === undefined ? null : { tokens: u.context.tokens, window: u.context.window, pct: u.context.percent ?? 0 }
-  const usd = u.cost?.usd ?? 0
+  const limits = (u.rateLimits ?? [])
+    .filter((r: any) => typeof r?.kind === 'string' && Number.isFinite(r.percentUsed))
+    .map((r: any) => ({ kind: r.kind, pct: Math.max(0, r.percentUsed), resetsAt: r.resetsAt && Number.isFinite(Date.parse(r.resetsAt)) ? r.resetsAt : undefined }))
+  const tokens = num(u.context?.tokens)
+  const window = num(u.context?.window)
+  const ctx = u.context?.tokens === undefined || window <= 0 ? null : { tokens, window, pct: Number.isFinite(u.context.percent) ? u.context.percent! : (tokens / window) * 100 }
+  const usd = num(u.cost?.usd)
   // Subscription accounts report rate-limit windows and get the 1-hour prompt cache; API keys get 5 minutes.
   const ttl = limits.some((l: any) => l.kind !== 'spend_limit') ? TTL_SUB_MS : TTL_API_MS
   const b = u.context.breakdown
   const parts: Part[] | undefined = b?.categories
     .filter((c: any) => c.kind === 'used' && c.tokens > 0)
     .sort((x: any, y: any) => y.tokens - x.tokens)
-    .map((c: any) => ({ name: c.name, tokens: c.tokens, color: c.color }))
-  const buffer = b ? (b.categories.find((c: any) => c.kind === 'buffer')?.tokens ?? 0) : undefined
+    .map((c: any) => ({ name: String(c.name), tokens: num(c.tokens), color: c.color }))
+  const buffer = b ? num(b.categories.find((c: any) => c.kind === 'buffer')?.tokens) : undefined
   await save($, (s: Snap) => {
     // Keep the last half hour of readings per limit; a drop means the window reset, so its history starts over.
     const samples: Record<string, Sample[]> = {}
@@ -200,7 +226,7 @@ async function refresh($: EngineInterface) {
       const kept = tail && l.pct < tail.pct - 1 ? [] : prev.filter(x => now - x.t <= 30 * 60_000)
       samples[l.kind] = !tail || now - tail.t >= 60_000 || l.pct !== tail.pct ? [...kept, { t: now, pct: l.pct }].slice(-40) : kept
     }
-    return { ...s, limits, ctx, usd, now, ttl, parts: parts ?? s.parts, buffer: buffer ?? s.buffer, samples, startedAt: u.startedAt ?? s.startedAt }
+    return { ...s, limits, ctx, usd, now, ttl, parts: parts ?? s.parts, buffer: buffer ?? s.buffer, samples, startedAt: num(u.startedAt) || s.startedAt }
   })
 }
 
@@ -231,6 +257,62 @@ async function setOpen($: EngineInterface, open: boolean) {
   await save($, (s: Snap) => ({ ...s, open }))
 }
 
+// The collapsed line as styled runs, at the most detail that fits `width` cells. Each step drops the least useful
+// part: reset notes, then the run-out forecast, then shorter bars, the cache, the context, the bars, the labels.
+export type Span = { text: string; color?: string; bold?: boolean }
+const LEVELS = [
+  { bar: 12, note: true, out: true, cache: true, ctx: true, label: true, sep: '  │  ' },
+  { bar: 12, note: false, out: true, cache: true, ctx: true, label: true, sep: '  │  ' },
+  { bar: 8, note: false, out: false, cache: true, ctx: true, label: true, sep: '  │  ' },
+  { bar: 6, note: false, out: false, cache: false, ctx: true, label: true, sep: ' │ ' },
+  { bar: 4, note: false, out: false, cache: false, ctx: false, label: true, sep: ' │ ' },
+  { bar: 0, note: false, out: false, cache: false, ctx: false, label: false, sep: ' │ ' },
+]
+export function bandLine(s: Snap, width: number): Span[] {
+  const resetAt = (l: Limit) => (l.resetsAt ? Date.parse(l.resetsAt) : 0)
+  const when = (t: number) => (localTime(t).date === localTime(s.now).date ? localTime(t).time : `${localTime(t).day} ${localTime(t).time}`)
+  const age = s.lastAt ? s.now - s.lastAt : s.ttl
+  const remain = Math.max(0, s.ttl - age)
+  const isWarm = s.lastAt > 0 && remain > 0
+  const shown = ['five_hour', 'seven_day', 'spend_limit'].map(k => s.limits.find(l => l.kind === k)).filter((l): l is Limit => !!l)
+  const build = (o: (typeof LEVELS)[number]) => {
+    const groups: Span[][] = shown.map(l => {
+      const out = forecast(l.pct, resetAt(l), WINDOW_MS[l.kind] ?? 0, s.now, s.samples[l.kind] ?? [])?.outAt
+      const m = meter(l.pct / 100, o.bar)
+      const note = !l.resetsAt ? '' : l.kind === 'five_hour' ? `${span(resetAt(l) - s.now)} · ${localTime(resetAt(l)).time}` : `${localTime(resetAt(l)).day} ${localTime(resetAt(l)).time}`
+      return [
+        { text: `${(LIMIT_ICON[l.kind] ?? moon)(l.pct)} ` },
+        ...(o.label ? [{ text: `${LIMIT_LABEL[l.kind] ?? l.kind} `, color: C.muted }] : []),
+        ...(o.bar ? [{ text: m.fill, color: usedTone(l.pct) }, { text: m.track, color: C.track }, { text: ' ' }] : []),
+        { text: `${Math.round(l.pct)}%`, color: usedTone(l.pct), bold: true },
+        ...(o.out && out ? [{ text: ` · runs out ~${when(out)}`, color: l.pct >= 85 ? C.bad : C.warn }] : []),
+        ...(o.note && note ? [{ text: ` · ${note}`, color: C.muted }] : []),
+      ]
+    })
+    if (o.ctx && s.ctx)
+      groups.push([
+        { text: `${bubble(s.ctx.pct)} ` },
+        ...(o.label ? [{ text: 'ctx ', color: C.muted }] : []),
+        { text: tok(s.ctx.tokens), bold: true },
+        { text: `/${tok(s.ctx.window)}`, color: C.muted },
+      ])
+    if (o.cache && s.lastAt > 0)
+      groups.push([
+        { text: `${ember(isWarm, remain)} ` },
+        ...(o.label ? [{ text: 'cache ', color: C.muted }] : []),
+        { text: isWarm ? (remain < 5 * 60_000 ? clock(remain) : span(remain)) : 'cold', color: !isWarm ? C.muted : remain < 5 * 60_000 ? C.warn : C.ok },
+      ])
+    groups.push([{ text: `${coin(s.working)} ` }, { text: money(s.usd), bold: true }, ...(o.label ? [{ text: ' est.', color: C.muted }] : [])])
+    return groups.flatMap((g, i) => (i ? [{ text: o.sep, color: C.track }, ...g] : g))
+  }
+  const fits = (line: Span[]) => line.reduce((n, sp) => n + cells(sp.text), 0) <= width
+  for (const o of LEVELS) {
+    const line = build(o)
+    if (fits(line)) return line
+  }
+  return build(LEVELS[LEVELS.length - 1]!)
+}
+
 // How many cards sit side by side in the band's width.
 export const perRow = (cols: number) => (cols >= 4 * CARD_MIN + 3 ? 4 : cols >= 2 * CARD_MIN + 1 ? 2 : 1)
 
@@ -240,7 +322,11 @@ export const register: Register = on => {
     $.ui.status(undefined)
     await save($, (s: Snap) => ({ ...s, open: false }))
     await refresh($)
-    if (!isLooping) void pulse($)
+    // The loop's pending sleep is aborted when the module unloads (a reload, the session's end): nothing to report.
+    if (!isLooping)
+      pulse($).catch(() => {
+        isLooping = false
+      })
     return next(e)
   })
 
@@ -273,13 +359,11 @@ export const register: Register = on => {
     const u = win ?? e.usage
     if (u) {
       const at = await $.clock.now()
-      const seen = u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
-      const turn: Turn = {
-        read: u.cache_read_input_tokens,
-        wrote: u.cache_creation_input_tokens,
-        fresh: u.input_tokens,
-        hit: Math.round((u.cache_read_input_tokens / Math.max(1, seen)) * 100),
-      }
+      // Bedrock, Vertex and gateways may leave the cache fields out.
+      const read = num(u.cache_read_input_tokens)
+      const wrote = num(u.cache_creation_input_tokens)
+      const fresh = num(u.input_tokens)
+      const turn: Turn = { read, wrote, fresh, hit: Math.round((read / Math.max(1, read + wrote + fresh)) * 100) }
       await save($, (s: Snap) => ({ ...s, model: e.usage?.model ?? s.model, lastAt: at, turns: [...s.turns, turn].slice(-12) }))
     }
     await refresh($)
@@ -290,10 +374,11 @@ export const register: Register = on => {
     const s = await load($)
     const five = s.limits.find(l => l.kind === 'five_hour')
     const week = s.limits.find(l => l.kind === 'seven_day')
-    if (e.props.hasSurvey || (!five && !week && !s.ctx)) return next(e)
+    const spend = s.limits.find(l => l.kind === 'spend_limit')
+    if (e.props.hasSurvey || (!s.limits.length && !s.ctx)) return next(e)
 
     const { Box, Text, Button } = $.ui.resolve(e)
-    const cols = e.props.bodyColumns ?? 80
+    const cols = Math.max(20, num(e.props.bodyColumns) || 80)
     const resetAt = (l?: { resetsAt?: string }) => (l?.resetsAt ? Date.parse(l.resetsAt) : 0)
     const flowing = animating(s)
     const roleColor = (role: Cell['role'], pct: number) =>
@@ -316,53 +401,29 @@ export const register: Register = on => {
     const isWarm = s.lastAt > 0 && remain > 0
     const cacheTone = !isWarm ? C.muted : remain < 5 * 60_000 ? C.warn : C.ok
 
-    // Collapsed: one quiet line.
+    // Collapsed: one quiet line, cut down to the band's width so it never wraps (a wrapped row garbles on redraw
+    // and can push the button off the line).
     if (!s.open) {
-      const narrow = cols < 70
-      const W = narrow ? 6 : 12
-      const BAND = { fill: '━', gap: '━', track: '─', needle: '' }
-      const Sep = () => <Text color={C.track}>  │  </Text>
-      const Mini = (p: { label: string; l: { kind: string; pct: number; resetsAt?: string }; note?: string }) => {
-        const out = fc(p.l)?.outAt
-        return (
-          <Text>
-            <Text>{(LIMIT_ICON[p.l.kind] ?? moon)(p.l.pct)} </Text>
-            <Text color={C.muted}>{p.label} </Text>
-            <PaceBar l={p.l} width={W} g={BAND} flow={false} />
-            <Text color={usedTone(p.l.pct)} bold> {Math.round(p.l.pct)}%</Text>
-            {!narrow && out ? <Text color={p.l.pct >= 85 ? C.bad : C.warn}> · runs out ~{when(out)}</Text> : null}
-            {p.note && !narrow ? <Text color={C.muted}> · {p.note}</Text> : null}
-          </Text>
-        )
-      }
+      // The terminal reports clicks to Claude Code only in its fullscreen layout; on the main screen a click never
+      // arrives, so the button there names the command instead of looking clickable. Enter presses it either way
+      // once ctrl+x tab has focused the band.
+      const clickable = e.surface !== 'terminal' || e.viewport?.isFullscreen !== false
+      const label = clickable ? 'details ›' : '/hud for details'
+      const line = bandLine(s, cols - cells(label) - 2)
       return (
         <Box>
-          {five && <Mini label="5h" l={five} note={five.resetsAt ? `${span(resetAt(five) - s.now)} · ${localTime(resetAt(five)).time}` : ''} />}
-          {five && week && <Sep />}
-          {week && <Mini label="week" l={week} note={week.resetsAt ? `${localTime(resetAt(week)).day} ${localTime(resetAt(week)).time}` : ''} />}
-          {s.ctx && <Sep />}
-          {s.ctx && (
-            <Text>
-              <Text>{bubble(s.ctx.pct)} </Text>
-              <Text color={C.muted}>ctx </Text>
-              <Text bold>{tok(s.ctx.tokens)}</Text>
-              <Text color={C.muted}>/{tok(s.ctx.window)}</Text>
+          <Box flexShrink={1}>
+            <Text wrap="truncate">
+              {line.map((sp, i) => (
+                <Text key={`b${i}`} color={sp.color} bold={sp.bold}>
+                  {sp.text}
+                </Text>
+              ))}
             </Text>
-          )}
-          {s.lastAt > 0 && <Sep />}
-          {s.lastAt > 0 && (
-            <Text>
-              <Text>{ember(isWarm, remain)} </Text>
-              <Text color={C.muted}>cache </Text>
-              <Text color={cacheTone}>{isWarm ? (remain < 5 * 60_000 ? clock(remain) : span(remain)) : 'cold'}</Text>
-            </Text>
-          )}
-          <Sep />
-          <Text>{coin(s.working)} </Text>
-          <Text bold>${s.usd.toFixed(2)}</Text>
-          <Text color={C.muted}> est.</Text>
-          <Text>  </Text>
-          <Button key="open" label="details ›" plain dimColor onPress={() => setOpen($, true)} />
+          </Box>
+          <Box flexShrink={0} marginLeft={2}>
+            <Button key="open" label={label} plain dimColor onPress={() => setOpen($, true)} />
+          </Box>
         </Box>
       )
     }
@@ -457,8 +518,15 @@ export const register: Register = on => {
       <Box flexDirection="column">
         <Box flexWrap="wrap" columnGap={1}>
           <Card title="Limits" right={<Text color={C.muted}>resets · {zoneLabel(new Date(s.now).getTimezoneOffset())}</Text>}>
-            <Limit title="5-hour" l={five} />
-            <Limit title="Weekly" l={week} />
+            {five || week ? <Limit title="5-hour" l={five} /> : null}
+            {five || week ? <Limit title="Weekly" l={week} /> : null}
+            {spend ? <Limit title="Spend limit" l={spend} /> : null}
+            {!five && !week && !spend ? (
+              <Box marginTop={1} flexDirection="column">
+                <Text color={C.muted} wrap="truncate">no plan limits on this account</Text>
+                <Text color={C.muted} wrap="truncate">(API key or cloud billing)</Text>
+              </Box>
+            ) : null}
           </Card>
 
           <Card
@@ -514,13 +582,14 @@ export const register: Register = on => {
                   <Text color={C.muted}> {clock(remain)}</Text>
                 </Text>
               ) : (
-                <Text color={C.muted}>○ cold</Text>
+                // No turn seen by this process (a fresh start, or a resumed session): the cache may well be warm.
+                <Text color={C.muted}>{s.lastAt ? '○ cold' : '— unknown'}</Text>
               )
             }
           >
             <Box marginTop={1} flexDirection="column">
               <Bar frac={isWarm ? remain / s.ttl : 0} color={C.ok} />
-              <Text color={C.muted}>{isWarm ? 'time left before the cache expires' : 'next turn re-writes the prompt'}</Text>
+              <Text color={C.muted}>{isWarm ? 'time left before the cache expires' : s.lastAt ? 'next turn re-writes the prompt' : 'known after the first reply'}</Text>
             </Box>
             {last ? (
               <Box marginTop={1} flexDirection="column">
@@ -541,13 +610,14 @@ export const register: Register = on => {
             )}
           </Card>
 
-          <Card title={`${coin(s.working)} Session`} right={<Text bold>≈ ${s.usd.toFixed(2)}</Text>}>
+          <Card title={`${coin(s.working)} Session`} right={<Text bold>≈ {money(s.usd)}</Text>}>
             <Box marginTop={1} flexDirection="column">
-              <Text color={C.muted} wrap="truncate">est. at API prices, not a bill</Text>
-              <Row left={<Text color={C.muted}>model</Text>} right={<Text wrap="truncate">{s.model || '—'}</Text>} />
+              <Text color={C.muted} wrap="truncate">{five || week ? 'est. at API prices, not a bill' : 'est. at API list prices'}</Text>
+              <Row left={<Text color={C.muted}>model</Text>} right={<Text>{clip(s.model || '—', W - 7)}</Text>} />
               <Row left={<Text color={C.muted}>turns</Text>} right={<Text>{s.turns.length}</Text>} />
-              {s.startedAt > 0 && s.now - s.startedAt > 60_000 && (
-                <Row left={<Text color={C.muted}>burn (est.)</Text>} right={<Text>≈ ${(s.usd / ((s.now - s.startedAt) / 3_600_000)).toFixed(2)}/h</Text>} />
+              {/* Under ten minutes in, an hourly rate is mostly noise: one big turn reads as hundreds an hour. */}
+              {s.startedAt > 0 && s.now - s.startedAt >= 10 * 60_000 && (
+                <Row left={<Text color={C.muted}>burn (est.)</Text>} right={<Text>≈ {money(s.usd / ((s.now - s.startedAt) / 3_600_000))}/h</Text>} />
               )}
               {s.turns.length >= 3 && (
                 <Row

@@ -35,7 +35,7 @@ claude plugin marketplace remove claude-usage-hud
 
 | | |
 | --- | --- |
-| `details ›` or `/hud` | open the cards; `‹ hide` or `/hud` again closes them |
+| `details ›` or `/hud` | open the cards; `‹ hide` or `/hud` again closes them. Clicking needs Claude Code's fullscreen layout (the terminal only reports clicks there); on the main screen the bar reads `/hud for details`, and ctrl+x tab then Enter works too |
 | `/hud calm` | stop the animations (icons and numbers stay); run it again to turn them back on |
 
 ## What you are looking at
@@ -48,9 +48,10 @@ claude plugin marketplace remove claude-usage-hud
 | --- | --- |
 | 🌕 🌖 🌗 🌘 🌑 | 5-hour limit: a moon waning as the limit drains |
 | 🌱 🌿 🌳 🍂 🥀 | weekly limit: a plant ageing through the week |
-| 🫧 🎈 💥 | context: a bubble filling up; 💥 means automatic compaction is close |
+| 💧 🎈 💥 | context: a bubble filling up; 💥 means automatic compaction is close |
 | 🔥 ⏳ 🧊 | prompt cache: warm, last five minutes (the time switches to a mm:ss countdown), cold |
-| 🪙 💸 | cost: idle, spending |
+| 💰 💸 | cost: idle, spending |
+| 💳 | an organization's spend limit (enterprise gateways), shown in place of the plan windows |
 
 **The cards.**
 
@@ -69,6 +70,15 @@ claude plugin marketplace remove claude-usage-hud
 | Context by category | Claude Code's local estimate, the same as `/context`: **estimated** |
 | Cost, burn per hour | token counts priced at Claude Code's built-in API rates, the same as `/cost`: **estimated**. On a Pro or Max subscription you are not billed per token, so this is what the session would cost on the API, not a charge |
 | Pace and projections | your usage over the last half hour once there is ten minutes of it, the window's average before that: **projection** |
+
+## After you reopen or resume a session
+
+The HUD only knows what this run of Claude Code has seen, so until the first reply comes back some values are missing or off:
+
+- **Cache** reads `unknown` and the bar leaves it out, even if the cache is still warm from before you closed the session. After the first reply it is exact again.
+- **5-hour and weekly limits** and **context** appear with the first reply; before it the bar may be empty or show only part of itself.
+- **Turns, hit rate and burn per hour** count only this run, not the session's earlier history.
+- **Cost** is whatever Claude Code's own `/cost` reports for the session; if that starts over on resume, so does the HUD.
 
 ## Tips
 
