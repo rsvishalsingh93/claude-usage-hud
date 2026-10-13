@@ -173,3 +173,24 @@ test('details opens the cards and hide closes them', async ($, on) => {
   expect((await main.find({ key: 'open' }))?.text).toContain('/hud')
   await main.unmount()
 })
+
+test('a usage reading without context or categories neither throws nor stops the HUD', async ($, on) => {
+  const now = Date.parse('2026-10-06T17:00:00Z')
+  mock.clock(on, { now })
+  on('session.usage', async () => ({ value: { rateLimits: [{ kind: 'five_hour', percentUsed: 40 }], context: undefined, cost: null } }) as any)
+  on('command.register', async () => ({ value: undefined }) as any)
+  on('ui.render', async () => ({ type: 'Box', props: {}, children: [] }) as any)
+  on('ui.status', async () => ({ value: undefined }) as any)
+  on('session.start', async (_$, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'usage-hud', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 120 } as any })
+  await ui.press({ key: 'open' })
+  expect(await ui.find({ key: 'close' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('/hud with an unknown argument explains itself instead of toggling', async ($, on) => {
+  on('command.register', async () => ({ value: undefined }) as any)
+  const out: any = await $.command.run({ command: 'hud', args: 'help' } as any)
+  expect(JSON.stringify(out)).toContain('Usage: /hud')
+})

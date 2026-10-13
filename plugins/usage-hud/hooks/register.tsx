@@ -190,8 +190,9 @@ async function load($: EngineInterface): Promise<Snap> {
   return { ...empty, ...value }
 }
 // Writes are version-checked and retried, so the clock and a turn's hooks never overwrite each other.
+// A write that keeps losing (it shouldn't) gives up rather than spin: the next tick writes again.
 async function save($: EngineInterface, change: (s: Snap) => Snap) {
-  for (;;) {
+  for (let tries = 0; tries < 20; tries++) {
     const { value, version } = await $.state.get({ plugin: 'usage-hud', key: 'snap' })
     const { isSet } = await $.state.set({ plugin: 'usage-hud', key: 'snap' }, change({ ...empty, ...value }), { ifVersion: version })
     if (isSet) return
@@ -211,12 +212,13 @@ async function refresh($: EngineInterface) {
   const usd = num(u.cost?.usd)
   // Subscription accounts report rate-limit windows and get the 1-hour prompt cache; API keys get 5 minutes.
   const ttl = limits.some((l: any) => l.kind !== 'spend_limit') ? TTL_SUB_MS : TTL_API_MS
-  const b = u.context.breakdown
-  const parts: Part[] | undefined = b?.categories
-    .filter((c: any) => c.kind === 'used' && c.tokens > 0)
+  const b = u.context?.breakdown
+  const cats: any[] | undefined = Array.isArray(b?.categories) ? b.categories : undefined
+  const parts: Part[] | undefined = cats
+    ?.filter((c: any) => c.kind === 'used' && c.tokens > 0)
     .sort((x: any, y: any) => y.tokens - x.tokens)
     .map((c: any) => ({ name: String(c.name), tokens: num(c.tokens), color: c.color }))
-  const buffer = b ? num(b.categories.find((c: any) => c.kind === 'buffer')?.tokens) : undefined
+  const buffer = cats ? num(cats.find((c: any) => c.kind === 'buffer')?.tokens) : undefined
   await save($, (s: Snap) => {
     // Keep the last half hour of readings per limit; a drop means the window reset, so its history starts over.
     const samples: Record<string, Sample[]> = {}
@@ -243,7 +245,8 @@ async function pulse($: EngineInterface) {
     const now = await $.clock.now()
     if (now - lastRead >= REFRESH_MS) {
       lastRead = now
-      await refresh($)
+      // One failed read (the host mid-reload, a gateway hiccup) must not stop the clock for the rest of the session.
+      await refresh($).catch(() => {})
     }
     await save($, (v: Snap) => ({ ...v, now, phase: v.phase + 1 }))
   }
@@ -331,7 +334,9 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'hud' }, async ($, e) => {
-    if (e.args.trim() === 'calm') {
+    const arg = e.args.trim()
+    if (arg && arg !== 'calm') return { text: 'Usage: /hud shows or hides the usage cards; /hud calm turns the animations off and on.' }
+    if (arg === 'calm') {
       const calm = !(await load($)).calm
       await save($, (s: Snap) => ({ ...s, calm }))
       return { text: calm ? 'Usage HUD animations off.' : 'Usage HUD animations on.' }
@@ -355,7 +360,7 @@ export const register: Register = on => {
     await save($, (s: Snap) => ({ ...s, working: false }))
     // turn.complete's usage sums every request of the turn, so a tool-heavy turn counts the whole prompt once per step.
     // The window's last response is what the context bar measures: use that so both agree.
-    const win = (await $.session.usage({ breakdown: 'summary' })).context.breakdown?.apiUsage
+    const win = (await $.session.usage({ breakdown: 'summary' })).context?.breakdown?.apiUsage
     const u = win ?? e.usage
     if (u) {
       const at = await $.clock.now()
@@ -530,7 +535,7 @@ export const register: Register = on => {
           </Card>
 
           <Card
-            title={`${s.ctx ? bubble(s.ctx.pct) : '🫧'} Context`}
+            title={`${bubble(s.ctx?.pct ?? 0)} Context`}
             right={
               s.ctx ? (
                 <Text>
