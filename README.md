@@ -115,6 +115,12 @@ claude plugin validate ./plugins/usage-hud
 claude plugin test ./plugins/usage-hud
 ```
 
+## More from the same maker
+
+Usage HUD also lives at [under5dollars.com/usage-hud](https://under5dollars.com/usage-hud/), next to
+[CCPrune](https://under5dollars.com/ccprune/), a Mac app that makes long Claude Code chats lighter before you resume them.
+Both are made by [Jhilmil Labs](https://jhilmillabs.com/).
+
 ## License
 
 MIT
