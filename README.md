@@ -2,6 +2,8 @@
 
 A small usage bar that sits above the Claude Code prompt and opens into a row of cards. You can see how much of your plan limits you have used, when they reset in your own time zone, whether you're using them faster than the clock refills them, what is filling your context window, whether the prompt cache is still warm, and roughly what the session would cost at API prices.
 
+Free and MIT licensed. If it ever saved you from a surprise limit, [☕ tip dadTheeBuilder](https://under5dollars.com/coffee?utm_source=usage-hud-readme) (pay what you want).
+
 ![The usage bar above the Claude Code prompt](docs/bar.png)
 
 Click `details ›` (or type `/hud`) and the bar opens into four cards above the prompt: **Limits**, **Context**, **Cache** and **Session**. They are drawn on your terminal's own background, so they fit light and dark terminals alike.
@@ -120,6 +122,8 @@ claude plugin test ./plugins/usage-hud
 Usage HUD also lives at [under5dollars.com/usage-hud](https://under5dollars.com/usage-hud/), next to
 [CCPrune](https://under5dollars.com/ccprune/), a Mac app that makes long Claude Code chats lighter before you resume them.
 Both are made by [Jhilmil Labs](https://jhilmillabs.com/).
+
+Like them? [☕ Tip dadTheeBuilder](https://under5dollars.com/coffee?utm_source=usage-hud-readme), any amount, nothing to unlock.
 
 ## License
 
