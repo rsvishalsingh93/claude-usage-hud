@@ -123,7 +123,8 @@ Usage HUD also lives at [under5dollars.com/usage-hud](https://under5dollars.com/
 [CCPrune](https://under5dollars.com/ccprune/), a Mac app that makes long Claude Code chats lighter before you resume them.
 Both are made by [Jhilmil Labs](https://jhilmillabs.com/).
 
-Like them? [☕ Tip dadTheeBuilder](https://under5dollars.com/coffee?utm_source=usage-hud-readme), any amount, nothing to unlock.
+Like them? [☕ Tip dadTheeBuilder](https://under5dollars.com/coffee?utm_source=usage-hud-readme), any amount, nothing to unlock,
+and [follow @dadtheebuilder on 𝕏](https://x.com/dadtheebuilder) for new tools.
 
 ## License
 
